@@ -268,8 +268,7 @@ def send_slack_message(channels, message):
     client_id = os.getenv('SLACK_CLIENT_ID')
     
     if not refresh_token_env or not client_id:
-        print("Warning: Missing SLACK_REFRESH_TOKEN or SLACK_CLIENT_ID in .env. Skipping Slack notification.")
-        return
+        raise ValueError("Missing SLACK_REFRESH_TOKEN or SLACK_CLIENT_ID in environment variables. If running on Streamlit Cloud, please add these to your App Secrets.")
         
     if refresh_token_env.startswith("xoxp-") or refresh_token_env.startswith("xoxe.xoxp-") or refresh_token_env.startswith("xoxb-"):
         access_token = refresh_token_env
@@ -277,8 +276,7 @@ def send_slack_message(channels, message):
         access_token = refresh_slack_token(client_id, refresh_token_env)
         
     if not access_token:
-        print("Warning: Could not obtain a valid Slack access token. Skipping Slack notification.")
-        return
+        raise ValueError("Could not obtain a valid Slack access token. Please check your SLACK_REFRESH_TOKEN and SLACK_CLIENT_ID.")
         
     post_url = "https://slack.com/api/chat.postMessage"
     headers = {
@@ -289,6 +287,7 @@ def send_slack_message(channels, message):
     # Split channels by comma and strip whitespace
     target_list = [c.strip() for c in channels.split(',') if c.strip()]
     
+    errors = []
     for target in target_list:
         # Resolve user ID if it's a name or email
         resolved_target = get_slack_user_id(target, access_token)
@@ -312,9 +311,13 @@ def send_slack_message(channels, message):
             if res_data.get('ok'):
                 print(f"Successfully sent summary to Slack target {post_target} ({target})!")
             else:
-                print(f"Failed to send Slack message to {post_target} ({target}): {res_data.get('error')}")
+                error_detail = res_data.get('error', 'unknown_error')
+                errors.append(f"Failed to send to {target}: {error_detail}")
         except Exception as e:
-            print(f"Exception sending Slack message to {post_target} ({target}): {e}")
+            errors.append(f"Exception sending to {target}: {e}")
+            
+    if errors:
+        raise ValueError("; ".join(errors))
 
 def setup_schedule(days, output_dir, slack_channel, sources, max_articles, interval):
     if sys.platform != 'darwin':
