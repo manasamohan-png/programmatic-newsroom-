@@ -172,72 +172,78 @@ def get_slack_user_id(name_or_email, access_token):
     if clean_name.startswith('#') or (len(clean_name) >= 9 and clean_name[0] in ('U', 'W', 'C', 'G') and clean_name[1:].isalnum()):
         return clean_name
         
-    # Check cache first
+    # Helper to search members list
+    def find_in_list(members_list, term):
+        search_term = term.lower().lstrip('@')
+        for member in members_list:
+            if member.get('deleted'):
+                continue
+            # Check username
+            if (member.get('name') or '').lower() == search_term:
+                return member['id']
+            # Check real name
+            if (member.get('real_name') or '').lower() == search_term:
+                return member['id']
+            # Check display name
+            profile = member.get('profile', {})
+            if (profile.get('display_name') or '').lower() == search_term:
+                return member['id']
+            # Check email
+            if (profile.get('email') or '').lower() == search_term:
+                return member['id']
+        return None
+
     import json
     import time
     cache_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '.slack_users_cache.json')
     members = []
     use_cache = False
     
+    # 1. Try loading from cache first
     if os.path.exists(cache_path):
         try:
             with open(cache_path, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
             # Cache is valid for 1 hour (3600 seconds)
-            if time.time() - cache_data.get('timestamp', 0) < 3600:
+            if abs(time.time() - cache_data.get('timestamp', 0)) < 3600:
                 members = cache_data.get('members', [])
                 use_cache = True
-                print("Using cached Slack users list...")
         except Exception as e:
             print(f"Warning: Could not read Slack users cache: {e}")
             
-    if not use_cache:
-        url = "https://slack.com/api/users.list"
-        headers = {
-            "Authorization": f"Bearer {access_token}"
-        }
-        try:
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            if data.get('ok'):
-                members = data.get('members', [])
-                # Save to cache
-                try:
-                    with open(cache_path, 'w', encoding='utf-8') as f:
-                        json.dump({'timestamp': time.time(), 'members': members}, f)
-                    print("Successfully cached Slack users list.")
-                except Exception as e:
-                    print(f"Warning: Could not write Slack users cache: {e}")
-            else:
-                print(f"Warning: Could not fetch users list from Slack: {data.get('error')}")
-                return clean_name
-        except Exception as e:
-            print(f"Exception fetching users list: {e}")
-            return clean_name
+    if use_cache:
+        user_id = find_in_list(members, clean_name)
+        if user_id:
+            return user_id
             
-    search_term = clean_name.lower().lstrip('@')
-    for member in members:
-        if member.get('deleted'):
-            continue
-            
-        # Check username
-        if (member.get('name') or '').lower() == search_term:
-            return member['id']
-            
-        # Check real name
-        if (member.get('real_name') or '').lower() == search_term:
-            return member['id']
-            
-        # Check display name
-        profile = member.get('profile', {})
-        if (profile.get('display_name') or '').lower() == search_term:
-            return member['id']
-            
-        # Check email
-        if (profile.get('email') or '').lower() == search_term:
-            return member['id']
-            
+    # 2. If not found in cache (or cache expired/missing), fetch fresh list from Slack
+    url = "https://slack.com/api/users.list"
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        if data.get('ok'):
+            members = data.get('members', [])
+            # Save to cache
+            try:
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump({'timestamp': time.time(), 'members': members}, f)
+                print("Successfully cached Slack users list.")
+            except Exception as e:
+                print(f"Warning: Could not write Slack users cache: {e}")
+                
+            # Search in the fresh list
+            user_id = find_in_list(members, clean_name)
+            if user_id:
+                return user_id
+        else:
+            print(f"Warning: Could not fetch users list from Slack: {data.get('error')}")
+    except Exception as e:
+        print(f"Exception fetching users list: {e}")
+        
     return clean_name
 
 def open_dm_channel(user_id, access_token):
